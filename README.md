@@ -3,6 +3,51 @@
 和安卓版 **同一套 web 层**（android 那边跑过 102 项回归），只是外壳换成了
 `WKWebView + 本地 HTTP 服务`。
 
+---
+
+## ⚡ 最快路径（不需要 Mac）
+
+工程已经在这台机器上 init 成 git 仓库并 commit 完了（34 个文件）。
+
+```
+1. GitHub 建空仓库（不勾 README / .gitignore / license）
+2. 双击 D:\tc\push-to-github.bat，粘贴仓库地址，浏览器登录
+3. GitHub → Actions → 「Build iOS ipa」→ Run workflow
+4. 等 3~5 分钟 → Artifacts 下载 Luminox-unsigned-ipa
+5. Windows 装 Sideloadly + 苹果官网版 iTunes → 填 Apple ID 签名
+```
+
+签名前**务必改 Bundle ID**（`project.pbxproj` 里 `PRODUCT_BUNDLE_IDENTIFIER`，
+Debug 和 Release 两处都要改），否则 `com.luminox.mobile` 被别人占用会签名失败。
+
+---
+
+## 本地能验到什么程度（别把它当成「能编译」）
+
+这台 Windows 上装了 **Swift 5.10.1 for Windows** 工具链，所以能跑：
+
+```
+node D:\tc\_test\swift-parse.js    ← 用真的 swift-frontend -parse 解析语法
+node D:\tc\_test\v2751.js          ← 95 项工程校验（含上一项）
+```
+
+实测结果：3 个 Swift 文件 **0 error**，合并解析无冲突。
+
+| 能证明 | 不能证明 |
+|---|---|
+| 语法合法（词法 + 语法分析通过） | **能不能编译**（`-parse` 不查类型、不查 API 签名） |
+| 没有括号/引号/声明结构错误 | UIKit / WebKit / Network 是否存在 |
+| 没有跨文件语法冲突 | 能不能运行（没有 iOS 运行时） |
+
+**为什么不用 stub 模块去做 `-typecheck`：**
+stub 的行为和真 API 不同。万一我的 stub 和真 API 不一致，验证通过反而会给出
+**错误的信心**。那种「看起来验过其实没验」的事不做。
+
+真正的答案只有 GitHub Actions 那个 **真 macOS + 真 Xcode**。
+第一次跑如果报错，把 `build/build.log` 发出来。
+
+---
+
 ```
 ios/
 ├─ LuminoxMobile.xcodeproj/          ← 可以直接双击打开
