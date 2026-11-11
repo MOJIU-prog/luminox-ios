@@ -1,0 +1,243 @@
+# =============================================================================
+# 云端构建 iOS 未签名 ipa —— 不需要你有 Mac
+# -----------------------------------------------------------------------------
+# 用法：
+#   1. 把 ios/ 目录推到一个 GitHub 仓库
+#   2. 打开仓库的 Actions 页，选「Build iOS ipa」→ Run workflow
+#   3. 跑完在页面底部 Artifacts 下载 Luminox-unsigned-ipa
+#
+# 免费额度：公开仓库无限；私有仓库 2000 分钟/月。
+#   macOS 运行器 2 倍计费 → 一次 3~5 分钟的构建约消耗 6~10 计费分钟。
+#
+# 为什么产出的是「未签名」ipa：
+#   签名需要你的开发者证书私钥和描述文件。把它们传到云端仓库有泄露风险，
+#   而且免费 Apple ID 的证书是「账号绑定」的，云端签出来的包你的手机也装不了。
+#   所以正确分工是：**云负责编译，本地负责签名**。
+#
+# 如果你的确想让云端也签名（付费开发者账号）：
+#   把 .p12 和 .mobileprovision 做成 base64 存进 Secrets，见文件末尾注释。
+# =============================================================================
+
+name: Build iOS ipa
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - 'LuminoxMobile/**'
+      - 'LuminoxMobile.xcodeproj/**'
+      - '.github/workflows/build-ios.yml'
+
+jobs:
+  build:
+    name: Build unsigned ipa
+    # 用最新的 macOS 镜像；Xcode 版本由 xcode-select 决定
+    runs-on: macos-14
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 环境信息
+        run: |
+          echo "=== 运行器 ==="
+          sw_vers
+          uname -m
+          echo ""
+          echo "=== Xcode ==="
+          xcodebuild -version
+          echo ""
+          echo "=== 可用 SDK ==="
+          xcodebuild -showsdks | grep -i ios || true
+          echo ""
+          echo "=== 磁盘 ==="
+          df -h /
+
+      - name: 校验工程结构
+        run: |
+          set -e
+          echo "=== 必需文件 ==="
+          for f in \
+            "LuminoxMobile.xcodeproj/project.pbxproj" \
+            "LuminoxMobile/Info.plist" \
+            "LuminoxMobile/LuminoxApp.swift" \
+            "LuminoxMobile/RootViewController.swift" \
+            "LuminoxMobile/LocalHTTPServer.swift" \
+            "LuminoxMobile/Assets.xcassets/AppIcon.appiconset/Contents.json" \
+            "LuminoxMobile/www/index.html"
+          do
+            if [ -f "$f" ]; then
+              echo "  ✓ $f"
+            else
+              echo "  ✗ 缺少 $f"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "=== www 文件数（应为 12）==="
+          N=$(find LuminoxMobile/www -type f | wc -l | tr -d ' ')
+          echo "  实际: $N"
+          [ "$N" -ge 12 ] || { echo "  www 文件不完整"; exit 1; }
+
+          echo ""
+          echo "=== Info.plist 合法性 ==="
+          plutil -lint LuminoxMobile/Info.plist
+
+          echo ""
+          echo "=== ATS 必须是「只放开本地网络」 ==="
+          # 不能出现 NSAllowsArbitraryLoads（那是全关 ATS，审核会被问）
+          if plutil -extract NSAppTransportSecurity.NSAllowsArbitraryLoads raw LuminoxMobile/Info.plist 2>/dev/null; then
+            echo "  ✗ 出现了 NSAllowsArbitraryLoads，不该有这一项"
+            exit 1
+          else
+            echo "  ✓ 没有 NSAllowsArbitraryLoads"
+          fi
+          LOCALNET=$(plutil -extract NSAppTransportSecurity.NSAllowsLocalNetworking raw LuminoxMobile/Info.plist 2>/dev/null || echo "")
+          if [ "$LOCALNET" = "true" ]; then
+            echo "  ✓ NSAllowsLocalNetworking = true"
+          else
+            echo "  ✗ NSAllowsLocalNetworking 不是 true，页面会加载失败"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== 图标：不能有 alpha 通道 ==="
+          # sips 能查颜色空间；如果有 alpha，App Store 校验会拒
+          for f in LuminoxMobile/Assets.xcassets/AppIcon.appiconset/*.png; do
+            HAS_ALPHA=$(sips -g hasAlpha "$f" 2>/dev/null | awk '/hasAlpha/{print $2}')
+            if [ "$HAS_ALPHA" = "yes" ]; then
+              echo "  ✗ $(basename $f) 有 alpha"
+              exit 1
+            fi
+          done
+          echo "  ✓ $(ls LuminoxMobile/Assets.xcassets/AppIcon.appiconset/*.png | wc -l | tr -d ' ') 个图标都没有 alpha"
+
+      - name: 列出 Scheme
+        run: |
+          xcodebuild -list -project LuminoxMobile.xcodeproj
+
+      - name: 构建（未签名）
+        run: |
+          set -o pipefail
+          mkdir -p build
+          # CODE_SIGNING_ALLOWED=NO 必须给：否则会因为找不到证书直接失败
+          xcodebuild \
+            -project LuminoxMobile.xcodeproj \
+            -scheme LuminoxMobile \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Luminox.xcarchive \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM="" \
+            archive 2>&1 | tee build/build.log
+
+      - name: 检查产物
+        run: |
+          set -e
+          APP="build/Luminox.xcarchive/Products/Applications/Luminox.app"
+          if [ ! -d "$APP" ]; then
+            echo "✗ 找不到 $APP"
+            echo "--- 归档目录内容 ---"
+            find build/Luminox.xcarchive -maxdepth 3 2>/dev/null || true
+            exit 1
+          fi
+          echo "=== App 包内容 ==="
+          ls -la "$APP" | head -20
+
+          echo ""
+          echo "=== ★ 验证 www 真的被原样打进去了 ==="
+          if [ ! -d "$APP/www" ]; then
+            echo "✗ App 包里没有 www 目录"
+            echo "  原因几乎一定是：www 没被配成 folder reference（蓝色文件夹）"
+            echo "  检查 pbxproj 里 isa = PBXFileReference 且 lastKnownFileType = folder"
+            exit 1
+          fi
+          WWW_N=$(find "$APP/www" -type f | wc -l | tr -d ' ')
+          echo "  www 文件数: $WWW_N"
+          for f in index.html app.js app.css lib/app.js lib/llm.js lib/kb.js; do
+            if [ -f "$APP/www/$f" ]; then echo "  ✓ www/$f"; else
+              # lib/app.js 不存在是正常的（app.js 在根），只提示
+              echo "  · www/$f 不存在"
+            fi
+          done
+          for f in index.html app.js app.css lib/llm.js lib/kb.js lib/memory.js lib/personas.js; do
+            [ -f "$APP/www/$f" ] || { echo "  ✗ 缺关键文件 www/$f"; exit 1; }
+          done
+
+          echo ""
+          echo "=== 架构 ==="
+          lipo -info "$APP/Luminox" || file "$APP/Luminox"
+
+          echo ""
+          echo "=== 最低系统版本 ==="
+          plutil -extract MinimumOSVersion raw "$APP/Info.plist" 2>/dev/null || echo "  (读不到)"
+
+      - name: 打包成 ipa
+        run: |
+          set -e
+          APP="build/Luminox.xcarchive/Products/Applications/Luminox.app"
+          mkdir -p build/Payload
+          cp -R "$APP" build/Payload/
+          cd build
+          zip -qry Luminox-unsigned.ipa Payload
+          rm -rf Payload
+          ls -lh Luminox-unsigned.ipa
+          echo ""
+          echo "SHA256:"
+          shasum -a 256 Luminox-unsigned.ipa
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: Luminox-unsigned-ipa
+          path: |
+            build/Luminox-unsigned.ipa
+            build/build.log
+          retention-days: 30
+
+      - name: 构建失败时也上传日志
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-failed
+          path: build/*.log
+          retention-days: 7
+
+# =============================================================================
+# 想让云端也签名？只有【付费开发者账号】值得这么做。
+# 免费 Apple ID 的证书是账号绑定 + 7 天过期，云端签出来的你手机装不上。
+#
+# 准备（本地做）：
+#   base64 -i Certificate.p12 -o cert.b64
+#   base64 -i profile.mobileprovision -o profile.b64
+# 存进仓库 Secrets：BUILD_CERT_P12 / BUILD_CERT_PASSWORD / BUILD_PROFILE
+#
+# 然后在上面的「构建（未签名）」之前加：
+#
+#   - name: 导入证书
+#     env:
+#       P12: ${{ secrets.BUILD_CERT_P12 }}
+#       PASSWORD: ${{ secrets.BUILD_CERT_PASSWORD }}
+#       PROFILE: ${{ secrets.BUILD_PROFILE }}
+#     run: |
+#       set -e
+#       KEYCHAIN=build.keychain
+#       security create-keychain -p actions $KEYCHAIN
+#       security default-keychain -s $KEYCHAIN
+#       security unlock-keychain -p actions $KEYCHAIN
+#       echo "$P12" | base64 -d > cert.p12
+#       security import cert.p12 -k $KEYCHAIN -P "$PASSWORD" -T /usr/bin/codesign
+#       security set-key-partition-list -S apple-tool:,apple: -s -k actions $KEYCHAIN
+#       mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+#       echo "$PROFILE" | base64 -d > ~/Library/MobileDevice/Provisioning\ Profiles/p.mobileprovision
+#
+#   并把构建参数改成 CODE_SIGN_STYLE=Automatic DEVELOPMENT_TEAM=<TEAM> -allowProvisioningUpdates
+#
+# 但坦白说：这条路维护成本不低，而且每次证书续期都要重新配一遍。
+# 如果你只有一台 iPhone 自用，本地 Sideloadly / AltStore 更省事。
+# =============================================================================

@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+
+    <!-- ====================================================================
+         Luminox Mobile — iOS
+         ====================================================================
+         几个刻意写死的点，都有原因：
+
+         ① NSAllowsLocalNetworking = true
+            页面由 127.0.0.1 上的内部 HTTP 服务提供。iOS 的 ATS 默认禁止明文
+            HTTP，但苹果为「本地网络 / loopback」留了这个例外键。
+            注意：这只放开了本地网络，**没有关掉 ATS**（不是 NSAllowsArbitraryLoads）。
+            对 api.deepseek.com 等外部接口仍然是强制 HTTPS。
+
+         ② UILaunchScreen 空字典
+            iOS 14+ 如果既没有 LaunchScreen.storyboard 也没有这个键，App 会以
+            非全屏（上下黑边 / 按 iPhone 8 尺寸缩放）方式运行，看起来像没适配。
+            给一个空字典就等于「一张纯白启动图 + 全屏」。
+
+         ③ 不要 NSLocalNetworkUsageDescription
+            我们只连 127.0.0.1（loopback），不属于「本地网络发现」，
+            所以不会弹「允许访问本地网络」的授权框。加了反而会弹。
+
+         ④ 方向限定竖屏为主，允许横屏
+            小食堂和设置页竖屏舒服；看长表格横屏方便。
+         ==================================================================== -->
+
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+
+    <key>CFBundleDisplayName</key>
+    <string>Luminox</string>
+
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+
+    <key>CFBundleShortVersionString</key>
+    <string>1.1.1</string>
+
+    <key>CFBundleVersion</key>
+    <string>3</string>
+
+    <!-- App 图标：只写 CFBundleIconName，交给 actool 处理。
+         不要手写 CFBundleIcons + "AppIcon60x60" 这种文件名 —— 目录里没有
+         叫这个名字的文件，会被当成缺失项，图标可能不显示。 -->
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
+
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+
+    <!-- 空字典 = 纯白启动图 + 全屏。不要填 UIColorName 指向不存在的颜色资源 -->
+    <key>UILaunchScreen</key>
+    <dict/>
+
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleDefault</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <true/>
+
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <key>UIRequiresFullScreen</key>
+    <false/>
+
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+    </array>
+
+    <key>UIBackgroundModes</key>
+    <array/>
+
+    <!-- ★ ATS：只给本地网络开例外，外部接口依然强制 HTTPS -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+
+    <!-- 允许 App 打开外部链接（跳 Safari） -->
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>http</string>
+        <string>https</string>
+        <string>mailto</string>
+    </array>
+
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
+</dict>
+</plist>

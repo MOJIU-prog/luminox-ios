@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover：让页面铺到刘海下面，insets 由 Java 侧通过 __lxApplyInsets 传进来 -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>Luminox</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============ 顶栏 ============ -->
+  <header id="topbar">
+    <div id="topTitle">对话</div>
+    <div class="grow"></div>
+    <button id="btnNew" class="iconbtn" title="新对话" type="button">＋</button>
+    <button id="btnMenu" class="iconbtn" title="会话列表" type="button">☰</button>
+  </header>
+
+  <!-- ============ 主体 ============ -->
+  <main id="main">
+
+    <!-- ---------- 对话 ---------- -->
+    <section class="view" id="view-chat">
+      <div id="kbHint" hidden></div>
+      <div id="chatScroll" class="scroll">
+        <div id="chatInner"></div>
+      </div>
+      <div id="composer">
+        <div id="composerBox">
+          <textarea id="input" rows="1" placeholder="说点什么…"></textarea>
+          <button id="sendBtn" type="button" aria-label="发送">↑</button>
+        </div>
+        <div id="composerHint">Enter 发送 · Shift+Enter 换行</div>
+      </div>
+    </section>
+
+    <!-- ---------- 小食堂 ---------- -->
+    <section class="view" id="view-canteen" hidden>
+      <div id="ctBody" class="scroll"></div>
+    </section>
+
+    <!-- ---------- 我的 ---------- -->
+    <section class="view" id="view-me" hidden>
+      <div id="meBody" class="scroll"></div>
+    </section>
+
+  </main>
+
+  <!-- ============ 底部标签 ============ -->
+  <nav id="tabbar">
+    <button class="tab on" data-tab="chat" type="button">
+      <span class="tab-ic">◐</span><span class="tab-tx">对话</span>
+    </button>
+    <button class="tab" data-tab="canteen" type="button">
+      <span class="tab-ic">🍳</span><span class="tab-tx">小食堂</span>
+    </button>
+    <button class="tab" data-tab="me" type="button">
+      <span class="tab-ic">◍</span><span class="tab-tx">我的</span>
+    </button>
+  </nav>
+
+</div>
+
+<!-- 会话抽屉 -->
+<div id="drawer" hidden>
+  <div id="drawerScrim"></div>
+  <aside id="drawerPanel">
+    <div class="dr-head">
+      <span>会话</span>
+      <button id="drawerClose" class="iconbtn" type="button">×</button>
+    </div>
+    <div id="convList" class="dr-list"></div>
+    <div class="dr-foot">
+      <button id="btnNew2" class="btn2" type="button">＋ 新对话</button>
+    </div>
+  </aside>
+</div>
+
+<!-- 通用弹层 -->
+<div id="sheet" hidden>
+  <div id="sheetScrim"></div>
+  <div id="sheetPanel">
+    <div class="sh-head">
+      <span id="sheetTitle">标题</span>
+      <button id="sheetClose" class="iconbtn" type="button">×</button>
+    </div>
+    <div id="sheetBody" class="sh-body"></div>
+  </div>
+</div>
+
+<div id="toast" hidden></div>
+
+<!--
+  脚本加载顺序有讲究，不能乱：
+    1. 纯数据（personas / kb-builtin / modes）—— 没有依赖
+    2. 纯逻辑模块（memory / compact / kb / llm）—— 只依赖上一步
+    3. 菜谱 + 小食堂引擎
+    4. app.js —— 依赖上面全部
+  其中 canteen-recipes 必须在 canteen 之前（引擎启动时要读 RECIPES）。
+-->
+<script src="lib/personas.js"></script>
+<script src="lib/kb-builtin.js"></script>
+<script src="lib/modes.js"></script>
+<script src="lib/memory.js"></script>
+<script src="lib/compact.js"></script>
+<script src="lib/kb.js"></script>
+<script src="lib/llm.js"></script>
+<script src="lib/canteen-recipes.js"></script>
+<script src="lib/canteen.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

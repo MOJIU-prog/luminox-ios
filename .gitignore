@@ -1,0 +1,19 @@
+# 构建产物（云端会重新生成）
+build/
+DerivedData/
+*.xcarchive
+*.ipa
+
+# Xcode 个人配置（含开发者账号信息，不该提交）
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
+
+# macOS 垃圾
+.DS_Store
+._*
+
+# Windows 垃圾
+Thumbs.db
+desktop.ini

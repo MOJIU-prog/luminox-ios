@@ -1,0 +1,69 @@
+# ============================================================================
+# Luminox Mobile — iOS 工程定义（XcodeGen 用）
+# ----------------------------------------------------------------------------
+# 为什么还要这个文件（已经有手写的 project.pbxproj 了）：
+#
+#   project.pbxproj 是 Xcode 的私有格式，我没有 macOS/Xcode 可以验证它一定
+#   能被打开。万一你那边打不开，用这个 yml 一条命令就能生成一份全新的、绝对
+#   合法的工程：
+#
+#       brew install xcodegen
+#       cd ios && xcodegen generate
+#
+#   也就是说：这个文件是「兜底重建」，不是必需。
+#
+# 注意 www 用的是 type: folder（蓝色文件夹引用），不是 group。
+#   这决定了它会被**原样拷进 App 包**、保留目录结构 —— Swift 里才能通过
+#   Bundle.main.url(forResource: "www") 找到。如果配成 group，Xcode 会把
+#   里面的文件摊平到包根目录，代码就找不到了。
+# ============================================================================
+
+name: LuminoxMobile
+
+options:
+  bundleIdPrefix: com.luminox
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+  developmentLanguage: zh-Hans
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+
+targets:
+  LuminoxMobile:
+    type: application
+    platform: iOS
+
+    sources:
+      # 三个 Swift 源文件
+      - path: LuminoxMobile/LuminoxApp.swift
+      - path: LuminoxMobile/RootViewController.swift
+      - path: LuminoxMobile/LocalHTTPServer.swift
+      # 资源目录
+      - path: LuminoxMobile/Assets.xcassets
+      # ★ 关键：整个 www 目录作为「folder reference」原样打包
+      - path: LuminoxMobile/www
+        type: folder
+
+    settings:
+      base:
+        PRODUCT_NAME: Luminox
+        PRODUCT_BUNDLE_IDENTIFIER: com.luminox.mobile
+        INFOPLIST_FILE: LuminoxMobile/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: "1.1.1"
+        CURRENT_PROJECT_VERSION: "3"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+        CODE_SIGN_STYLE: Automatic
+        # 留空；在 Xcode 里选你的 Team，或者用 xcodebuild DEVELOPMENT_TEAM=xxx 传
+        DEVELOPMENT_TEAM: ""
+        # 自己签名不需要 bitcode
+        ENABLE_BITCODE: NO
