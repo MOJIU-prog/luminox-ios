@@ -32,8 +32,10 @@ on:
 jobs:
   build:
     name: Build unsigned ipa
-    # 用最新的 macOS 镜像；Xcode 版本由 xcode-select 决定
-    runs-on: macos-14
+    # 实测：macos-14 在本账号下「从未分配到 runner」→ job 被立刻 cancelled；
+    #       macos-15 和 macos-latest 都能正常拿到 runner。所以用 macos-latest。
+    #       排查记录见 _test/ios-ci-diagnose.txt
+    runs-on: macos-latest
 
     steps:
       - name: 检出代码
