@@ -1,5 +1,20 @@
 # Luminox Mobile — iOS
 
+> ## ✅ 云端构建已通过
+>
+> **运行 #2 · 72 秒 · 9 个步骤全 success · 产物 `Luminox-unsigned-ipa` 205.0 KB**
+>
+> `xcodebuild archive` 成功，且 `检查产物` 步（带 `set -e`）确认了
+> `Luminox.app/www/` 目录存在、7 个关键前端文件齐全 ——
+> 也就是 **folder reference 生效，没被摊平**。
+>
+> 完整排查记录见 [CI-BUILD-RESULT.md](CI-BUILD-RESULT.md)。
+>
+> 第一次构建曾被 1 秒取消，原因是 `runs-on: macos-14` 在本仓库下拿不到 runner，
+> 换成 `macos-latest` 后立刻通过。
+
+---
+
 和安卓版 **同一套 web 层**（android 那边跑过 102 项回归），只是外壳换成了
 `WKWebView + 本地 HTTP 服务`。
 
