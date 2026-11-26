@@ -17,3 +17,7 @@ project.xcworkspace/xcshareddata/IDEWorkspaceChecks.plist
 # Windows 垃圾
 Thumbs.db
 desktop.ini
+
+# 本机测试用的静态服务（不属于 App，不该进仓库）
+LuminoxMobile/_serve.js
+_serve.js

@@ -1,5 +1,5 @@
 /* ============================================================================
- * Luminox Mobile — v1.1.1
+ * Luminox Mobile — v1.2.0
  * ----------------------------------------------------------------------------
  * 这个文件的职责：把「手机上能用的那部分 Luminox」跑起来。
  *
@@ -10,15 +10,26 @@
  * 所以这里没有 api()，只有：
  *   · streamChat()  直连模型，SSE 流式
  *   · CANTEEN      小食堂引擎（原样打包，数据落 localStorage）
+ *   · LX_FILES    文件上传/压缩/IndexedDB
+ *   · LX_EXTRA    其余功能页（知识库/记忆/人设/仪表盘/日志…）
  *   · store()      会话/设置持久化
  *
+ * v1.2.0 补的东西（用户：「不要阉割 除了只能在电脑上运行的东西 其他都加进去」）：
+ *   · 文件上传（图片走视觉模型，文本类直接读）
+ *   · 文件页、知识库页（含导入）、记忆页、未来任务页、仪表盘、日志页、
+ *     余额页、技能页、接入平台页、使用说明页
+ *   · 底部 tab 4 个 + 抽屉里 10 个功能入口
+ *
  * 明确不做的事（不是遗漏，是手机上没有这些东西的对象）：
- *   PowerShell 工具、真终端、eNSP 拓扑、VMware 管理。详见「我的」页的能力表。
+ *   PowerShell 工具、真终端、eNSP 拓扑、VMware 管理、插件、基础设施巡检。
+ *   详见「使用说明」和「技能」页的逐项说明。
  *
  * 兼容性：ES2015（不用可选链、不用 ??、不用 catch{}）。
  * ========================================================================== */
 (function () {
   'use strict';
+
+  var APP_VER = '1.2.0';
 
   /* ==========================================================================
    * 0. 常量 / 状态
@@ -39,7 +50,9 @@
     ctView: 'home',        // home | recipe | cook
     ctRecipeId: '',
     ctSessionId: '',
-    ctLast: null           // 上一次 recommend 的结果（避免重复算）
+    ctLast: null,          // 上一次 recommend 的结果（避免重复算）
+    attach: [],            // ★ 待发送的附件（LX_FILES 记录）
+    unmount: null          // ★ extras 页卸载钩子
   };
 
   var $ = function (id) { return document.getElementById(id); };
@@ -350,28 +363,63 @@
   /* ==========================================================================
    * 4. 界面：标签切换
    * ========================================================================== */
+  /* v2.7.52：视图从 3 个扩到「4 个 tab + 10 个功能页」
+     user 原话：「不要阉割 除了只能在电脑上运行的东西 其他都加进去」 */
+  var EXTRA_KEYS = ['files', 'knowledge', 'memory', 'schedules', 'dashboard', 'logs', 'balance', 'skills', 'connectors', 'guide'];
+
   function go(tab) {
+    var prev = S.tab;
+    /* 离开上一个页要先拆掉它绑的事件，否则 extras 页的 onclick 会跑到下一个页 */
+    if (S.unmount && EXTRA_KEYS.indexOf(prev) >= 0) { try { S.unmount(); } catch (_) { } }
+    S.unmount = null;
     S.tab = tab;
-    ['chat', 'canteen', 'me'].forEach(function (t) {
+    var isExtra = EXTRA_KEYS.indexOf(tab) >= 0;
+    ['chat', 'files', 'canteen', 'me'].forEach(function (t) {
       var v = $('view-' + t);
       if (v) v.hidden = (t !== tab);
     });
+    var ex = $('view-extra');
+    if (ex) ex.hidden = !isExtra;
+
     var tabs = document.querySelectorAll('.tab');
     for (var i = 0; i < tabs.length; i++) {
       tabs[i].classList.toggle('on', tabs[i].getAttribute('data-tab') === tab);
     }
-    var titles = { chat: '对话', canteen: '小食堂', me: '我的' };
-    $('topTitle').textContent = titles[tab] || 'Luminox';
+    var titles = { chat: '对话', files: '文件', canteen: '小食堂', me: '我的' };
+    var title = titles[tab] || (window.LX_EXTRA ? window.LX_EXTRA.title(tab) : tab);
+    $('topTitle').textContent = title || 'Luminox';
+
+    /* 「回到上一个大页」：从功能页进去的才显返回，否则返回默认回对话 */
+    var back = $('btnBack');
+    if (back) {
+      back.hidden = !isExtra;
+      back.onclick = function () { go('chat'); };
+    }
     // 顶部按钮只在对话页有意义
     $('btnNew').style.display = tab === 'chat' ? '' : 'none';
-    $('btnMenu').style.display = tab === 'chat' ? '' : 'none';
+    $('btnMenu').style.display = '';
 
-    /* ★ 切回对话页要重绘：在「我的」里改了人设/模式，空会话的标题和起始卡片
-       会跟着变（“通用助手 · 聊天模式” → “运维工程师 · 工作模式”）。
-       不重绘的话用户会以为设置没生效。（自动化验收就是这样抓到的） */
     if (tab === 'chat') renderChat();
     else if (tab === 'canteen') ctRender();
     else if (tab === 'me') renderMe();
+    else if (tab === 'files') mountExtra('files');
+    else if (isExtra) mountExtra(tab);
+  }
+
+  /* 把 extras 页渲染到共用容器 */
+  function mountExtra(key) {
+    var body = $('extraBody');
+    if (!body) return;
+    if (!window.LX_EXTRA) { body.innerHTML = '<div class="ex-pad"><div class="ex-empty bad">extras.js 没加载</div></div>'; return; }
+    var api = {
+      toast: toast,
+      settings: function () { return getSettings(); },
+      convs: function () { return loadConvs(); },
+      memory: memorySvc(),
+      version: function () { return APP_VER; },
+      go: go
+    };
+    S.unmount = window.LX_EXTRA.render(key, body, api);
   }
 
   /* ==========================================================================
@@ -434,13 +482,132 @@
     var html = '';
     c.msgs.forEach(function (m, idx) {
       var mine = m.role === 'user';
+      /* v1.2.0：附件缩略图。存的是文件 id，图从 IndexedDB 读回来后填 src，
+         不在 localStorage 里存 base64（会直接写爆 5MB 配额）。 */
+      var atHtml = '';
+      if (m.files && m.files.length) {
+        atHtml = '<div class="msg-files">';
+        m.files.forEach(function (f) {
+          if (f.kind === 'image') {
+            atHtml += '<div class="msg-file msg-file-img" data-fid="' + E(f.id) + '">' +
+              '<img alt="" data-fimg="' + E(f.id) + '"><span class="mf-nm">' + E(f.name) + '</span></div>';
+          } else {
+            atHtml += '<div class="msg-file"><span class="mf-ic">▤</span><span class="mf-nm">' + E(f.name) +
+              '</span><span class="mf-sz">' + E(f.chars ? f.chars + ' 字' : '') + '</span></div>';
+          }
+        });
+        atHtml += '</div>';
+      }
       html += '<div class="msg ' + (mine ? 'user' : 'ai') + '">' +
         '<div class="bubble" data-i="' + idx + '">' +
+        atHtml +
         (mine ? E(m.text).replace(/\n/g, '<br>') : md(m.text)) +
         '</div></div>';
     });
     box.innerHTML = html;
+    /* 异步把图片填回缩略图（IndexedDB 是异步的，不能阻塞渲染） */
+    if (window.LX_FILES) {
+      var imgs = box.querySelectorAll('img[data-fimg]');
+      for (var k = 0; k < imgs.length; k++) {
+        (function (img) {
+          var id = img.getAttribute('data-fimg');
+          window.LX_FILES.get(id).then(function (r) {
+            if (r && r.dataUrl) img.src = r.dataUrl;
+          }).catch(function () { });
+        })(imgs[k]);
+      }
+    }
     scrollBottom();
+  }
+
+  /* ==========================================================================
+   * 5.1 附件（v1.2.0）
+   * ========================================================================== */
+  function renderAttachBar() {
+    var bar = $('attachBar');
+    if (!bar) return;
+    var list = S.attach || [];
+    if (!list.length) { bar.hidden = true; bar.innerHTML = ''; return; }
+    bar.hidden = false;
+    var html = '';
+    list.forEach(function (r, i) {
+      var th = r.kind === 'image'
+        ? '<img class="att-th" src="' + r.dataUrl + '" alt="">'
+        : '<div class="att-th att-th-tx">' + E((window.LX_FILES ? window.LX_FILES.extOf(r.name) : 'TXT').toUpperCase().slice(0, 4)) + '</div>';
+      html += '<div class="att">' + th +
+        '<button class="att-x" data-att-del="' + i + '" type="button">×</button>' +
+        '<div class="att-nm">' + E(r.name) + '</div></div>';
+    });
+    bar.innerHTML = html;
+    bar.onclick = function (ev) {
+      var t = ev.target;
+      if (!t || !t.getAttribute) return;
+      var d = t.getAttribute('data-att-del');
+      if (d == null) return;
+      S.attach.splice(Number(d), 1);
+      renderAttachBar();
+    };
+  }
+
+  function addAttachFiles(files, fromCamera) {
+    var F = window.LX_FILES;
+    if (!F) return toast('文件模块没加载');
+    var arr = [].slice.call(files || []);
+    if (!arr.length) return;
+    var done = 0, errs = [];
+    function next() {
+      done++;
+      if (done < arr.length) return one(arr[done]);
+      renderAttachBar();
+      if (errs.length) toast(errs[0]);
+    }
+    function one(f) {
+      F.addFile(f).then(function (rec) {
+        if (S.attach.length >= 6) { errs.push('一次最多带 6 个附件'); next(); return; }
+        S.attach.push(rec);
+        next();
+      }).catch(function (e) { errs.push(e.message); next(); });
+    }
+    one(arr[0]);
+  }
+
+  function pickAttach(which) {
+    var inp = $(which === 'camera' ? 'msgCam' : 'msgFile');
+    if (!inp) return;
+    inp.value = '';
+    inp.onchange = function () { addAttachFiles(inp.files); };
+    inp.click();
+  }
+
+  /* 从「文件」页选一个已存的 */
+  function pickFromStored() {
+    var F = window.LX_FILES;
+    if (!F) return toast('文件模块没加载');
+    F.all().then(function (list) {
+      if (!list.length) { toast('还没有存过的文件，先点「选文件」'); return; }
+      var html = '<div class="file-list">';
+      list.forEach(function (r, i) {
+        html += '<div class="file-item" data-usepick="' + i + '">' +
+          (r.kind === 'image' ? '<img class="file-th" src="' + r.dataUrl + '" alt="">' : '<div class="file-th file-th-tx">TXT</div>') +
+          '<div class="file-main"><div class="file-nm">' + E(r.name) + '</div>' +
+          '<div class="file-sub">' + E(F.fmtSize(r.size)) + '</div></div></div>';
+      });
+      html += '</div>';
+      openSheet('选一个已存的文件', html);
+      $('sheetBody').onclick = function (ev) {
+        var t = ev.target;
+        while (t && t !== this && !(t.getAttribute && t.getAttribute('data-usepick') != null)) t = t.parentNode;
+        if (!t || t === this) return;
+        var idx = Number(t.getAttribute('data-usepick'));
+        var rec = list[idx];
+        if (rec) {
+          /* 复制成新 id，避免删文件时把历史消息里的缩略图也弄没 */
+          S.attach.push({ id: rec.id, name: rec.name, kind: rec.kind, dataUrl: rec.dataUrl, text: rec.text, chars: rec.chars, size: rec.size });
+          renderAttachBar();
+        }
+        closeSheet();
+      };
+    });
   }
 
   function scrollBottom() {
@@ -548,7 +715,7 @@
   }
 
   /* 真正发给模型的消息列表 */
-  function buildMessages(userQuery) {
+  function buildMessages(userQuery, attach) {
     var cfg = getSettings();
     var conv = curConv();
     var sys = buildSystemPrompt(userQuery);
@@ -569,17 +736,52 @@
 
     var out = [{ role: 'system', content: sys }];
     hist.forEach(function (m) {
-      if (!m.text) return;
-      out.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.text });
+      if (!m.text && !(m.files && m.files.length)) return;
+      /* v1.2.0：历史里的附件只留名字。图片**不回放 base64** ——
+         一张图 base64 几百 KB，几轮下来上下文就爆了，而且每轮重传很浪费。
+         模型能看到「（用户发过一张图：xxx）」，知道有过这回事。 */
+      var content = String(m.text || '');
+      if (m.files && m.files.length) {
+        var names = m.files.map(function (f) { return f.name; }).join('、');
+        content += (content ? '\n\n' : '') + '（附件：' + names + '）';
+      }
+      out.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: content });
     });
+
+    /* ★ 当前这一轮才把图真正发出去 */
+    if (attach && (attach.images.length || attach.texts.length)) {
+      var last = null;
+      for (var i = out.length - 1; i >= 0; i--) { if (out[i].role === 'user') { last = out[i]; break; } }
+      if (last) {
+        if (attach.texts.length) {
+          var block = window.LX_FILES ? window.LX_FILES.textBlock(attach.texts) : '';
+          if (block) last.content = String(last.content || '') + '\n\n【附件内容】\n' + block;
+        }
+        if (attach.images.length) {
+          /* OpenAI / Gemini / Anthropic 三家的图片格式完全不同，
+             这里只放统一形状 {mime,b64}，具体转换在 llm.js 里按协议做 */
+          last.images = attach.images.map(function (im) {
+            var m = String(im.dataUrl || '').match(/^data:([^;,]+);base64,(.*)$/);
+            return m ? { mime: m[1], b64: m[2] } : { mime: 'image/jpeg', b64: String(im.dataUrl || '') };
+          });
+        }
+      }
+    }
     return out;
+  }
+
+  /* 当前提供商能不能看图 —— 不看就提前告警，而不是让它默默忽略图 */
+  function provSupportsVision(p, model) {
+    var t = String((p && p.name) || '') + ' ' + String(model || '');
+    return /vision|vl|gpt-4o|gpt-4\.1|gpt-4-turbo|gemini|claude|qwen.*vl|glm-4v|moonshot.*vision/i.test(t);
   }
 
   function sendMsg() {
     if (S.streaming) { stopStream(); return; }
     var t = $('input');
     var text = t.value.trim();
-    if (!text) return;
+    var attaches = (S.attach || []).slice();
+    if (!text && !attaches.length) return;
 
     var prov = activeProvider();
     if (!providerReady(prov)) {
@@ -588,15 +790,27 @@
       return;
     }
 
+    /* 附件转 payload */
+    var payload3 = window.LX_FILES ? window.LX_FILES.toPayload(attaches) : { images: [], texts: [] };
+    if (payload3.images.length && !provSupportsVision(prov, getSettings().activeModel)) {
+      toast('当前模型可能看不了图（' + getSettings().activeModel + '），图可能被忽略');
+    }
+
     var c = curConv();
-    c.msgs.push({ role: 'user', text: text, at: Date.now() });
+    var msgFiles = attaches.map(function (r) {
+      return { id: r.id, name: r.name, kind: r.kind, size: r.size, chars: r.chars };
+    });
+    c.msgs.push({ role: 'user', text: text, at: Date.now(), files: msgFiles.length ? msgFiles : undefined });
     if (c.msgs.length === 1) {
-      c.title = text.slice(0, 20);
+      c.title = (text || (msgFiles[0] && msgFiles[0].name) || '新对话').slice(0, 20);
       renderConvList();
     }
     t.value = '';
+    S.attach = [];
+    renderAttachBar();
     autoGrow();
     saveConvs();
+    if (window.LX_EXTRA) window.LX_EXTRA.log('chat', '发送消息（' + (msgFiles.length ? msgFiles.length + ' 个附件' : '纯文本') + '）');
 
     /* 自动抽事实（存进会话记忆） */
     if (getSettings().autoFacts && getSettings().memoryEnabled) {
@@ -620,9 +834,10 @@
     };
 
     /* ★ 关键：先存当前问题再建消息列表（buildMessages 要拿它查知识库） */
-    var payload = buildMessages(text);
+    var payload = buildMessages(text, payload3);
     var provNow = activeProvider();
     var modelNow = getSettings().activeModel;
+    trackUsage('calls');
 
     streamChat(payload, function (delta, full) {
       c.msgs[aiIdx].text = full;
@@ -1745,6 +1960,53 @@
         p.starters.map(function (s) { return '· ' + E(s); }).join('<br>') + '</div></div>' : ''));
   }
 
+  /* ---------- 人设列表（v1.2.0：原来只能新建 + 切换，不能删也不能看全部） ---------- */
+  function meOpenPersonas() {
+    var all = allPersonas();
+    var cur = getSettings().personaId;
+    var cfg = getSettings();
+    var html = '<div class="ct-note">内置 ' + all.filter(function (p) { return p.builtin; }).length +
+      ' 个 + 自建 ' + all.filter(function (p) { return !p.builtin; }).length + ' 个。点一下就是切到它，下一条消息生效。</div>';
+    html += '<div class="prov-list" style="margin-top:8px">';
+    all.forEach(function (p) {
+      var on = (p.id === cur) || (cur === p.id);
+      html += '<div class="prov-item' + (on ? ' on' : '') + '" data-perid="' + E(p.id) + '">' +
+        '<div class="pi-main"><div class="pi-name">' + E((p.emoji || '') + ' ' + p.name) +
+        (p.builtin ? ' <span class="badge">内置</span>' : '') + '</div>' +
+        '<div class="pi-sub">' + E(String(p.tagline || p.persona || '').slice(0, 60)) + '</div></div>' +
+        (p.builtin ? '' : '<button class="pi-btn" data-perdel="' + E(p.id) + '" type="button">删</button>') +
+        '</div>';
+    });
+    html += '</div>';
+    html += '<div class="ct-addrow" style="margin-top:14px"><button class="btn2" id="perNew2" type="button">＋ 新建自己的人设</button></div>';
+    openSheet('人设（' + all.length + '）', html);
+
+    $('sheetBody').onclick = function (ev) {
+      var t = ev.target;
+      if (t && t.getAttribute && t.getAttribute('data-perdel')) {
+        var id = t.getAttribute('data-perdel');
+        if (!confirm('删掉这个人设？')) return;
+        var ps = (cfg.personas || []).filter(function (x) { return x.id !== id; });
+        var patch = { personas: ps };
+        if (getSettings().personaId === id) patch.personaId = (allPersonas()[0] || {}).id || '';
+        saveSettings(patch);
+        meOpenPersonas();
+        toast('已删除');
+        return;
+      }
+      if (t && t.id === 'perNew2') { closeSheet(); meNewPersona(); return; }
+      var it = null;
+      var cur2 = t;
+      while (cur2 && cur2 !== this && !(cur2.getAttribute && cur2.getAttribute('data-perid'))) cur2 = cur2.parentNode;
+      if (cur2 && cur2 !== this) it = cur2;
+      if (!it) return;
+      var pid = it.getAttribute('data-perid');
+      saveSettings({ personaId: pid });
+      meOpenPersonas();
+      toast('已切到「' + ((allPersonas().filter(function (x) { return x.id === pid; })[0] || {}).name || pid) + '」');
+    };
+  }
+
   /* ---------- 记忆 ---------- */
   function meOpenMemory() {
     var mem = memorySvc();
@@ -1931,13 +2193,8 @@
   function closeSheet() { $('sheet').hidden = true; }
 
   function bindGlobal() {
-    // 标签
-    var tabs = document.querySelectorAll('.tab');
-    for (var i = 0; i < tabs.length; i++) {
-      tabs[i].addEventListener('click', function () {
-        go(this.getAttribute('data-tab'));
-      });
-    }
+    /* 标签绑定在下面（v1.2.0）。原来这里用 querySelectorAll('.tab') 绑过一次，
+       新增的 #navGrid 里也有带 data-tab 的元素，会重复绑 → 点一下就切两次页。 */
 
     // 抽屉
     $('btnMenu').addEventListener('click', openDrawer);
@@ -1945,6 +2202,29 @@
     $('drawerScrim').addEventListener('click', closeDrawer);
     $('btnNew').addEventListener('click', function () { newConv(); toast('新对话'); });
     $('btnNew2').addEventListener('click', function () { newConv(); closeDrawer(); });
+
+    // ★ v1.2.0 附件
+    var ba = $('btnAttach');
+    if (ba) ba.addEventListener('click', function () {
+      var html = '<div class="att-menu">' +
+        '<button class="att-opt" data-at="files" type="button"><b>选文件</b><span>图片 / txt / md / json / csv / 代码</span></button>' +
+        '<button class="att-opt" data-at="camera" type="button"><b>拍照</b><span>直接调相机</span></button>' +
+        '<button class="att-opt" data-at="stored" type="button"><b>从「文件」页选</b><span>已经存过的</span></button>' +
+        '</div>';
+      openSheet('加附件', html);
+      $('sheetBody').onclick = function (ev) {
+        var t = ev.target;
+        while (t && t !== this && !(t.getAttribute && t.getAttribute('data-at'))) t = t.parentNode;
+        if (!t || t === this) return;
+        var k = t.getAttribute('data-at');
+        closeSheet();
+        if (k === 'stored') pickFromStored();
+        else pickAttach(k);
+      };
+    });
+
+    // 抽屉里的功能入口
+    renderNavGrid();
 
     $('convList').addEventListener('click', function (ev) {
       var t = ev.target;
@@ -1972,6 +2252,14 @@
     $('sheetClose').addEventListener('click', closeSheet);
     $('sheetScrim').addEventListener('click', closeSheet);
 
+    // 底部 tab
+    var tabs = document.querySelectorAll('#tabbar .tab');
+    for (var ti = 0; ti < tabs.length; ti++) {
+      tabs[ti].addEventListener('click', function () {
+        go(this.getAttribute('data-tab'));
+      });
+    }
+
     // 输入
     var inp = $('input');
     inp.addEventListener('input', autoGrow);
@@ -1982,6 +2270,61 @@
       }
     });
     $('sendBtn').addEventListener('click', sendMsg);
+
+    // 粘图（某些输入法/浏览器支持）
+    inp.addEventListener('paste', function (e) {
+      var cd = e.clipboardData;
+      if (!cd || !cd.items) return;
+      var got = [];
+      for (var i = 0; i < cd.items.length; i++) {
+        var it = cd.items[i];
+        if (it.kind === 'file') { var f = it.getAsFile(); if (f) got.push(f); }
+      }
+      if (got.length) addAttachFiles(got);
+    });
+  }
+
+  /* 抽屉里的功能入口（底部只有 4 个 tab，其余全在这里） */
+  var NAV_ITEMS = [
+    { id: 'knowledge', ic: '▣', nm: '知识库' },
+    { id: 'memory', ic: '◉', nm: '记忆' },
+    { id: 'personas', ic: '☺', nm: '人设' },
+    { id: 'skills', ic: '✦', nm: '技能' },
+    { id: 'schedules', ic: '◷', nm: '未来任务' },
+    { id: 'dashboard', ic: '▤', nm: '仪表盘' },
+    { id: 'logs', ic: '≡', nm: '日志' },
+    { id: 'balance', ic: '¥', nm: '余额' },
+    { id: 'connectors', ic: '⇄', nm: '接入平台' },
+    { id: 'guide', ic: '☰', nm: '使用说明' },
+    { id: 'me', ic: '⚙', nm: '设置' }
+  ];
+
+  function renderNavGrid() {
+    var g = $('navGrid');
+    if (!g) return;
+    var html = '';
+    NAV_ITEMS.forEach(function (it) {
+      html += '<button class="nav-btn" data-nav="' + it.id + '" type="button">' +
+        '<span class="nav-ic">' + E(it.ic) + '</span><span class="nav-nm">' + E(it.nm) + '</span></button>';
+    });
+    g.innerHTML = html;
+    g.onclick = function (ev) {
+      var t = ev.target;
+      while (t && t !== g && !(t.getAttribute && t.getAttribute('data-nav'))) t = t.parentNode;
+      if (!t || t === g) return;
+      var k = t.getAttribute('data-nav');
+      closeDrawer();
+      /* 「人设」不在 extras 里，它是「我的」页里的一块，直接进去 */
+      if (k === 'personas') { go('me'); setTimeout(meOpenPersonas, 120); return; }
+      go(k);
+    };
+  }
+
+  /* 用量计数（仪表盘用） */
+  function trackUsage(field, n) {
+    var u = store('lx.usage') || { calls: 0, inTok: 0, outTok: 0, errors: 0 };
+    u[field] = (u[field] || 0) + (n == null ? 1 : n);
+    store('lx.usage', u);
   }
 
   /* ==========================================================================

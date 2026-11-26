@@ -161,15 +161,51 @@
   /* ==========================================================================
    * OpenAI 兼容协议
    * ========================================================================== */
+  /* ==========================================================================
+   * v2.7.52：视觉（图片）支持
+   * -----------------------------------------------------------------------
+   * 用户原话：「连上传文件都不行」。之前三种协议都只会发纯文本。
+   *
+   * 约定：消息对象可以是 { role, content: string, images: [{mime, b64}] }
+   *   base64 **不带** data:image/...;base64, 前缀（带前缀的在这里剥掉）。
+   * 三种协议的图片形状完全不同，所以各自转：
+   *   OpenAI   content: [{type:'text'},{type:'image_url',image_url:{url:'data:...'}}]
+   *   Gemini   parts:   [{text},{inline_data:{mime_type,data}}]
+   *   Anthropic content: [{type:'text'},{type:'image',source:{type:'base64',media_type,data}}]
+   * ========================================================================== */
+  function splitDataUrl(s) {
+    var t = String(s || '');
+    var m = t.match(/^data:([^;,]+);base64,(.*)$/);
+    if (m) return { mime: m[1], b64: m[2] };
+    return { mime: 'image/jpeg', b64: t };
+  }
+
+  function hasImages(m) {
+    return !!(m && m.images && m.images.length);
+  }
+
   function callOpenAI(provider, model, messages, opts, hooks) {
     var base = String(provider.baseUrl || '').replace(/\/+$/, '');
     var url = base + '/chat/completions';
     var headers = { 'Content-Type': 'application/json' };
     if (provider.apiKey) headers['Authorization'] = 'Bearer ' + provider.apiKey;
 
+    /* 带图的消息转成 OpenAI 的多段内容格式；没图的保持纯字符串（兼容性最好，
+       很多中转网关对「纯文本也用数组」会报错） */
+    var oaMsgs = messages.map(function (m) {
+      if (!hasImages(m)) return { role: m.role, content: String(m.content || '') };
+      var arr = [];
+      if (String(m.content || '').trim()) arr.push({ type: 'text', text: String(m.content) });
+      m.images.forEach(function (im) {
+        var p = splitDataUrl(im.dataUrl || im.b64);
+        arr.push({ type: 'image_url', image_url: { url: 'data:' + p.mime + ';base64,' + p.b64 } });
+      });
+      return { role: m.role, content: arr };
+    });
+
     var body = {
       model: model,
-      messages: messages,
+      messages: oaMsgs,
       stream: !!opts.stream,
       temperature: opts.temperature == null ? 0.7 : opts.temperature
     };
@@ -224,9 +260,18 @@
     for (var i = 0; i < messages.length; i++) {
       var m = messages[i];
       if (m.role === 'system') { sys.push(m.content); continue; }
+      var parts = [];
+      if (String(m.content || '').trim()) parts.push({ text: String(m.content || '') });
+      if (hasImages(m)) {
+        m.images.forEach(function (im) {
+          var p = splitDataUrl(im.dataUrl || im.b64);
+          parts.push({ inline_data: { mime_type: p.mime, data: p.b64 } });
+        });
+      }
+      if (!parts.length) parts.push({ text: '' });
       contents.push({
         role: m.role === 'assistant' ? 'model' : 'user',
-        parts: [{ text: String(m.content || '') }]
+        parts: parts
       });
     }
 
@@ -288,9 +333,23 @@
     for (var i = 0; i < messages.length; i++) {
       var m = messages[i];
       if (m.role === 'system') { sys.push(m.content); continue; }
+      if (!hasImages(m)) {
+        msgs.push({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: String(m.content || '')
+        });
+        continue;
+      }
+      /* 带图：content 变数组。注意 Anthropic 的字段名是 media_type（下划线） */
+      var arr = [];
+      m.images.forEach(function (im) {
+        var p = splitDataUrl(im.dataUrl || im.b64);
+        arr.push({ type: 'image', source: { type: 'base64', media_type: p.mime, data: p.b64 } });
+      });
+      if (String(m.content || '').trim()) arr.push({ type: 'text', text: String(m.content) });
       msgs.push({
         role: m.role === 'assistant' ? 'assistant' : 'user',
-        content: String(m.content || '')
+        content: arr
       });
     }
 

@@ -14,10 +14,11 @@
 
   <!-- ============ 顶栏 ============ -->
   <header id="topbar">
+    <button id="btnBack" class="iconbtn" type="button" hidden title="返回">‹</button>
     <div id="topTitle">对话</div>
     <div class="grow"></div>
     <button id="btnNew" class="iconbtn" title="新对话" type="button">＋</button>
-    <button id="btnMenu" class="iconbtn" title="会话列表" type="button">☰</button>
+    <button id="btnMenu" class="iconbtn" title="会话与功能" type="button">☰</button>
   </header>
 
   <!-- ============ 主体 ============ -->
@@ -29,14 +30,22 @@
       <div id="chatScroll" class="scroll">
         <div id="chatInner"></div>
       </div>
+      <!-- 待发送的附件（选完但还没发出去） -->
+      <div id="attachBar" hidden></div>
       <div id="composer">
         <div id="composerBox">
+          <button id="btnAttach" class="cbtn" type="button" title="加图片/文件">＋</button>
           <textarea id="input" rows="1" placeholder="说点什么…"></textarea>
           <button id="sendBtn" type="button" aria-label="发送">↑</button>
         </div>
         <div id="composerHint">Enter 发送 · Shift+Enter 换行</div>
       </div>
+      <input type="file" id="msgFile" hidden multiple>
+      <input type="file" id="msgCam" hidden accept="image/*" capture="environment">
     </section>
+
+    <!-- ---------- 文件 ---------- -->
+    <section class="view" id="view-files" hidden><div id="filesBody" class="scroll"></div></section>
 
     <!-- ---------- 小食堂 ---------- -->
     <section class="view" id="view-canteen" hidden>
@@ -48,12 +57,18 @@
       <div id="meBody" class="scroll"></div>
     </section>
 
+    <!-- ---------- 其余功能页（由 extras.js 动态渲染到同一个容器） ---------- -->
+    <section class="view" id="view-extra" hidden><div id="extraBody" class="scroll"></div></section>
+
   </main>
 
   <!-- ============ 底部标签 ============ -->
   <nav id="tabbar">
     <button class="tab on" data-tab="chat" type="button">
       <span class="tab-ic">◐</span><span class="tab-tx">对话</span>
+    </button>
+    <button class="tab" data-tab="files" type="button">
+      <span class="tab-ic">▤</span><span class="tab-tx">文件</span>
     </button>
     <button class="tab" data-tab="canteen" type="button">
       <span class="tab-ic">🍳</span><span class="tab-tx">小食堂</span>
@@ -65,7 +80,7 @@
 
 </div>
 
-<!-- 会话抽屉 -->
+<!-- 会话 + 功能抽屉 -->
 <div id="drawer" hidden>
   <div id="drawerScrim"></div>
   <aside id="drawerPanel">
@@ -76,6 +91,11 @@
     <div id="convList" class="dr-list"></div>
     <div class="dr-foot">
       <button id="btnNew2" class="btn2" type="button">＋ 新对话</button>
+    </div>
+    <!-- 功能入口：底部 tab 只有 4 个，其余都在这里 -->
+    <div class="dr-more">
+      <div class="dr-more-t">功能</div>
+      <div id="navGrid" class="nav-grid"></div>
     </div>
   </aside>
 </div>
@@ -98,8 +118,10 @@
   脚本加载顺序有讲究，不能乱：
     1. 纯数据（personas / kb-builtin / modes）—— 没有依赖
     2. 纯逻辑模块（memory / compact / kb / llm）—— 只依赖上一步
-    3. 菜谱 + 小食堂引擎
-    4. app.js —— 依赖上面全部
+    3. 文件（files）—— 独立
+    4. 菜谱 + 小食堂引擎
+    5. extras —— 其余功能页（依赖 LX_FILES/LX_KB，但用的时候才取）
+    6. app.js —— 依赖上面全部
   其中 canteen-recipes 必须在 canteen 之前（引擎启动时要读 RECIPES）。
 -->
 <script src="lib/personas.js"></script>
@@ -109,8 +131,10 @@
 <script src="lib/compact.js"></script>
 <script src="lib/kb.js"></script>
 <script src="lib/llm.js"></script>
+<script src="lib/files.js"></script>
 <script src="lib/canteen-recipes.js"></script>
 <script src="lib/canteen.js"></script>
+<script src="lib/extras.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
